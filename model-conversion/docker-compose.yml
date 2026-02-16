@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  model-converter:
+    build: ./
+    volumes:
+      - ../Models:/workspace/output
+      - .:/workspace
+    environment:
+      - HF_HOME=/workspace/.cache

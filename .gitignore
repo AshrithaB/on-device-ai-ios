@@ -1,0 +1,23 @@
+.DS_Store
+.build/
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+
+# Python virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Model files (large binaries)
+Models/
+*.mlpackage/
+*.mlmodel
+
+# Model conversion cache
+model-conversion/.cache/
+model-conversion/output/

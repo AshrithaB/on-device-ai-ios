@@ -1,0 +1,168 @@
+import Foundation
+
+/// Main entry point for the Core Engine
+/// Coordinates document ingestion, chunking, embedding, and search
+public actor CoreEngine {
+    private let database: Database
+    private let documentStore: DocumentStore
+    private let chunkStore: ChunkStore
+    private let embeddingStore: EmbeddingStore
+    private let chunker: TextChunker
+    private let embeddingModel: EmbeddingModel
+    private let vectorStore: VectorStore
+    private let similaritySearch: SimilaritySearch
+
+    public init(databasePath: String = ":memory:") async throws {
+        self.database = try Database(path: databasePath)
+        self.documentStore = DocumentStore(database: database)
+        self.chunkStore = ChunkStore(database: database)
+        self.embeddingStore = EmbeddingStore(database: database)
+        self.chunker = TextChunker()
+        self.embeddingModel = EmbeddingModel()
+        self.vectorStore = try await VectorStore(embeddingStore: embeddingStore)
+        self.similaritySearch = SimilaritySearch(vectorStore: vectorStore)
+    }
+
+    // MARK: - Document Ingestion
+
+    /// Ingest a document and create chunks
+    /// - Parameters:
+    ///   - title: Document title
+    ///   - content: Document content
+    ///   - source: Optional source identifier
+    /// - Returns: The created document
+    @discardableResult
+    public func ingest(title: String, content: String, source: String? = nil) async throws -> Document {
+        // Create document
+        let document = Document(
+            title: title,
+            content: content,
+            source: source
+        )
+
+        // Save document
+        try await documentStore.insert(document)
+
+        // Chunk the content
+        let chunkedTexts = chunker.chunk(content)
+
+        // Convert to Chunk models and save
+        let chunks = chunkedTexts.map { chunkedText in
+            Chunk(
+                documentId: document.id,
+                content: chunkedText.content,
+                tokenCount: chunkedText.tokenCount,
+                chunkIndex: chunkedText.chunkIndex
+            )
+        }
+
+        try await chunkStore.insertBatch(chunks)
+
+        // Generate embeddings for all chunks
+        try await embedChunks(chunks)
+
+        return document
+    }
+
+    /// Generate and store embeddings for chunks
+    private func embedChunks(_ chunks: [Chunk]) async throws {
+        let texts = chunks.map { $0.content }
+
+        // Generate embeddings in batch
+        let embeddings = try await embeddingModel.embedBatch(texts)
+
+        // Store in vector store (now persists to database)
+        var embeddingDict: [String: [Float]] = [:]
+        for (chunk, embedding) in zip(chunks, embeddings) {
+            embeddingDict[chunk.id] = embedding
+        }
+
+        try await vectorStore.storeBatch(embeddingDict)
+    }
+
+    // MARK: - Document Management
+
+    /// Fetch all documents
+    public func getDocuments() async throws -> [Document] {
+        try await documentStore.fetchAll()
+    }
+
+    /// Fetch a specific document
+    public func getDocument(id: String) async throws -> Document? {
+        try await documentStore.fetch(id: id)
+    }
+
+    /// Delete a document and its chunks
+    public func deleteDocument(id: String) async throws {
+        try await documentStore.delete(id: id)
+    }
+
+    /// Get chunks for a document
+    public func getChunks(forDocument documentId: String) async throws -> [Chunk] {
+        try await chunkStore.fetchChunks(forDocument: documentId)
+    }
+
+    /// Get all chunks
+    public func getAllChunks() async throws -> [Chunk] {
+        try await chunkStore.fetchAll()
+    }
+
+    // MARK: - Stats
+
+    /// Get statistics about the knowledge base
+    public func getStats() async throws -> EngineStats {
+        let documentCount = try await documentStore.count()
+        let chunkCount = try await chunkStore.fetchAll().count
+        let vectorStats = await vectorStore.getStats()
+
+        return EngineStats(
+            documentCount: documentCount,
+            chunkCount: chunkCount,
+            vectorCount: vectorStats.vectorCount,
+            memoryMB: vectorStats.estimatedMemoryMB
+        )
+    }
+
+    // MARK: - Search
+
+    /// Search for relevant chunks using semantic search
+    /// - Parameters:
+    ///   - query: Search query
+    ///   - topK: Number of results to return
+    ///   - minScore: Minimum similarity score (0.0 to 1.0)
+    /// - Returns: Array of search results sorted by relevance
+    public func search(
+        query: String,
+        topK: Int = 5,
+        minScore: Float = 0.0
+    ) async throws -> [SearchResult] {
+        // Generate query embedding
+        let queryEmbedding = try await embeddingModel.embed(query)
+
+        // Get all chunks
+        let allChunks = try await chunkStore.fetchAll()
+
+        // Perform similarity search
+        let config = SearchConfig(topK: topK, minScore: minScore)
+        return await similaritySearch.search(
+            queryEmbedding: queryEmbedding,
+            chunks: allChunks,
+            config: config
+        )
+    }
+}
+
+/// Statistics about the engine's knowledge base
+public struct EngineStats: Sendable {
+    public let documentCount: Int
+    public let chunkCount: Int
+    public let vectorCount: Int
+    public let memoryMB: Double
+
+    public init(documentCount: Int, chunkCount: Int, vectorCount: Int = 0, memoryMB: Double = 0.0) {
+        self.documentCount = documentCount
+        self.chunkCount = chunkCount
+        self.vectorCount = vectorCount
+        self.memoryMB = memoryMB
+    }
+}
