@@ -41,10 +41,12 @@ public struct PromptBuilder {
     /// - Parameters:
     ///   - query: The user's question
     ///   - searchResults: Relevant chunks from vector search
+    ///   - documents: Map of document ID to document (for citation metadata)
     /// - Returns: Tuple of (formatted prompt, citations array)
     public func buildPrompt(
         query: String,
-        searchResults: [SearchResult]
+        searchResults: [SearchResult],
+        documents: [String: Document] = [:]
     ) -> (prompt: String, citations: [Citation]) {
         // Handle empty results
         guard !searchResults.isEmpty else {
@@ -56,7 +58,7 @@ public struct PromptBuilder {
         let selectedResults = selectChunks(from: searchResults)
 
         // Build citations
-        let citations = buildCitations(from: selectedResults)
+        let citations = buildCitations(from: selectedResults, documents: documents)
 
         // Build context section
         let contextSection = buildContextSection(citations: citations)
@@ -104,17 +106,24 @@ public struct PromptBuilder {
     }
 
     /// Build citations from search results
-    private func buildCitations(from results: [SearchResult]) -> [Citation] {
+    private func buildCitations(from results: [SearchResult], documents: [String: Document]) -> [Citation] {
         return results.enumerated().map { index, result in
             // Create snippet (truncate if very long)
             let snippet = truncateSnippet(result.chunk.content)
+
+            // Look up document metadata
+            let document = documents[result.chunk.documentId]
+            let documentTitle = document?.title ?? "Unknown Document"
+            let documentSource = document?.source
 
             return Citation(
                 number: index + 1,  // 1-based numbering
                 chunkId: result.chunk.id,
                 documentId: result.chunk.documentId,
+                documentTitle: documentTitle,
+                documentSource: documentSource,
                 snippet: snippet,
-                score: result.score
+                relevanceScore: result.score
             )
         }
     }

@@ -5,7 +5,12 @@ xcuserdata/
 DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.swiftpm/xcode/
 .netrc
+
+# Xcode
+*.xcworkspace/xcshareddata/
+*.xcodeproj/xcshareddata/
 
 # Python virtual environments
 .venv/

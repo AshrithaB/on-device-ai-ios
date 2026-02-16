@@ -129,7 +129,6 @@ struct CoreEngineCLI {
 
                 // Stream the answer
                 var fullAnswer = ""
-                var citationCount = 0
 
                 for await token in await engine.ask(query: question, topK: 3) {
                     switch token {
@@ -139,26 +138,24 @@ struct CoreEngineCLI {
                         fullAnswer += text
 
                     case .metadata(let meta):
-                        citationCount = meta.citationsUsed
                         print("\n")
                         print("📊 Generated in \(meta.generationTimeMs)ms")
                         print("📚 Citations: \(meta.citationsUsed)")
 
-                    case .citation(let num):
-                        print("[\(num)]", terminator: "")
+                    case .citations(let cites):
+                        // Citations sent at end of stream
+                        print("\n\n📑 Citations:")
+                        for citation in cites {
+                            print("  [\(citation.number)] \(citation.documentTitle)")
+                            print("      Score: \(String(format: "%.3f", citation.relevanceScore))")
+                            print("      \(String(citation.snippet.prefix(120)))...")
+                            if let source = citation.documentSource {
+                                print("      Source: \(source)")
+                            }
+                        }
 
                     case .error(let err):
                         print("\n❌ Error: \(err)")
-                    }
-                }
-
-                // Show full answer with citations
-                if citationCount > 0 {
-                    print("\n📖 Citation Details:")
-                    let answer = try await engine.askComplete(query: question, topK: 3)
-                    for citation in answer.citations {
-                        print("  [\(citation.number)] Score: \(String(format: "%.3f", citation.score))")
-                        print("      \(String(citation.snippet.prefix(120)))...")
                     }
                 }
 

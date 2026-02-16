@@ -14,26 +14,36 @@ public struct Citation: Codable, Sendable, Identifiable {
     /// Source document identifier
     public let documentId: String
 
+    /// Document title (for display)
+    public let documentTitle: String
+
+    /// Document source URL (if any)
+    public let documentSource: String?
+
     /// Text excerpt from the source
     public let snippet: String
 
     /// Search relevance score (0.0 to 1.0)
-    public let score: Float
+    public let relevanceScore: Float
 
     public init(
         id: String = UUID().uuidString,
         number: Int,
         chunkId: String,
         documentId: String,
+        documentTitle: String,
+        documentSource: String? = nil,
         snippet: String,
-        score: Float
+        relevanceScore: Float
     ) {
         self.id = id
         self.number = number
         self.chunkId = chunkId
         self.documentId = documentId
+        self.documentTitle = documentTitle
+        self.documentSource = documentSource
         self.snippet = snippet
-        self.score = score
+        self.relevanceScore = relevanceScore
     }
 }
 
@@ -79,8 +89,8 @@ public enum StreamToken: Sendable {
     /// Content token (part of the answer text)
     case content(String)
 
-    /// Citation marker in the stream
-    case citation(Int)
+    /// Citations for the answer
+    case citations([Citation])
 
     /// Metadata about the completed generation
     case metadata(AnswerMetadata)

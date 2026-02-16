@@ -91,7 +91,51 @@ Last Updated: 2026-02-16
 
 **Note:** Mock implementation allows immediate progress on Phase 2 without blocking on LLM model selection/optimization.
 
-## Phase 2: iOS App 🚫 (Not Started)
+## Phase 2: iOS App ✅ (Complete!)
+
+**🎉 iOS App MVP Complete!** Full SwiftUI app with all core features:
+- ✅ Project structure and Package.swift setup
+- ✅ CoreEngine integration (local package dependency)
+- ✅ Document library browser with detail view
+- ✅ Add document form (manual text entry)
+- ✅ Semantic search interface with ranked results
+- ✅ Chat interface with streaming Q&A
+- ✅ Citation viewer with expand/collapse
+- ✅ Cross-platform support (macOS 13+, iOS 16+)
+- ✅ AppState management with async CoreEngine
+- ✅ Tab-based navigation (Library, Add, Search, Ask)
+
+### Features Implemented (2026-02-16)
+1. **OnDeviceAIApp.swift**: Main app with AppState for CoreEngine lifecycle
+2. **ContentView.swift**: TabView with 4 main sections
+3. **DocumentLibraryView.swift**:
+   - List all documents
+   - Document detail with chunks
+   - Statistics button (planned)
+4. **AddDocumentView.swift**:
+   - Form for title, source, content
+   - Validation and error handling
+   - Success confirmation alert
+5. **SearchView.swift**:
+   - Search bar with natural language queries
+   - Results list with relevance scores
+   - Async document metadata loading
+   - Color-coded score indicators
+6. **ChatView.swift**:
+   - Message list with user/assistant roles
+   - Streaming answer display with AsyncStream
+   - Citation tracking with [1], [2] markers
+   - Expandable citation cards showing sources
+   - Error handling for failed generations
+
+### Technical Details
+- **Build Status**: ✅ Compiles successfully with `swift build`
+- **Platform Compatibility**: macOS 13+, iOS 16+ (cross-platform UI)
+- **Database**: Persistent SQLite in Application Support directory
+- **Concurrency**: Actor-based AppState, async/await throughout
+- **Dependencies**: CoreEngine (local package)
+
+**Note**: App uses mock models (same as CoreEngine). Ready for Xcode project creation and real device testing. Real model integration can proceed in parallel.
 
 ---
 
@@ -108,15 +152,16 @@ Last Updated: 2026-02-16
 
 ## Next Steps
 
-### Option 1: Start Phase 2 (iOS App) - **RECOMMENDED**
-Phase 1B-MVP is complete and ready for consumption. Can start iOS app development immediately:
-1. Create SwiftUI app project
-2. Import CoreEngine package
-3. Build UI for document capture, search, and Q&A
-4. Implement streaming answer display
-5. Add citation viewer
+### Option 1: Create Xcode Project for Device Testing - **RECOMMENDED**
+Phase 2 (iOS App) is complete as a Swift Package. Next steps:
+1. Create Xcode iOS App project
+2. Add OnDeviceAI package as local dependency
+3. Test on physical devices (iPhone, iPad)
+4. Optimize for different screen sizes
+5. Add app icons and launch screens
+6. Submit to TestFlight (optional)
 
-### Option 2: Real LLM Integration (Parallel Track)
+### Option 2: Real Model Integration (Parallel Track)
 Can proceed with real model integration in parallel with iOS development:
 1. Evaluate llama.cpp vs Core ML for LLM
 2. Download and test TinyLlama 1.1B GGUF

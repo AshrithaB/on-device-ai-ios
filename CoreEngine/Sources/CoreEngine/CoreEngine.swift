@@ -174,16 +174,29 @@ public actor CoreEngine {
                     // Search for relevant chunks
                     let searchResults = try await search(query: query, topK: topK)
 
+                    // Fetch document metadata for citations
+                    let documentIds = Set(searchResults.map { $0.chunk.documentId })
+                    var documents: [String: Document] = [:]
+                    for docId in documentIds {
+                        if let doc = try await getDocument(id: docId) {
+                            documents[docId] = doc
+                        }
+                    }
+
                     // Build RAG prompt
                     let (prompt, citations) = promptBuilder.buildPrompt(
                         query: query,
-                        searchResults: searchResults
+                        searchResults: searchResults,
+                        documents: documents
                     )
 
                     // Stream generated answer
                     for await token in await generationModel.generateStream(prompt) {
                         continuation.yield(.content(token))
                     }
+
+                    // Send citations
+                    continuation.yield(.citations(citations))
 
                     // Send final metadata
                     let generationTimeMs = Int(Date().timeIntervalSince(startTime) * 1000)
@@ -217,10 +230,20 @@ public actor CoreEngine {
         // Search for relevant chunks
         let searchResults = try await search(query: query, topK: topK)
 
+        // Fetch document metadata for citations
+        let documentIds = Set(searchResults.map { $0.chunk.documentId })
+        var documents: [String: Document] = [:]
+        for docId in documentIds {
+            if let doc = try await getDocument(id: docId) {
+                documents[docId] = doc
+            }
+        }
+
         // Build RAG prompt
         let (prompt, citations) = promptBuilder.buildPrompt(
             query: query,
-            searchResults: searchResults
+            searchResults: searchResults,
+            documents: documents
         )
 
         // Generate answer

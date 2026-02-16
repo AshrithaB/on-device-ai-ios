@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// Represents a source document in the knowledge base
-public struct Document: Codable, FetchableRecord, PersistableRecord, Sendable {
+public struct Document: Codable, FetchableRecord, PersistableRecord, Sendable, Identifiable {
     public var id: String
     public var title: String
     public var content: String
