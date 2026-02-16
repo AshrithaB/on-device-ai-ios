@@ -11,6 +11,8 @@ public actor CoreEngine {
     private let embeddingModel: EmbeddingModel
     private let vectorStore: VectorStore
     private let similaritySearch: SimilaritySearch
+    private let generationModel: GenerationModel
+    private let promptBuilder: PromptBuilder
 
     public init(databasePath: String = ":memory:") async throws {
         self.database = try Database(path: databasePath)
@@ -21,6 +23,8 @@ public actor CoreEngine {
         self.embeddingModel = EmbeddingModel()
         self.vectorStore = try await VectorStore(embeddingStore: embeddingStore)
         self.similaritySearch = SimilaritySearch(vectorStore: vectorStore)
+        self.generationModel = GenerationModel()
+        self.promptBuilder = PromptBuilder()
     }
 
     // MARK: - Document Ingestion
@@ -148,6 +152,89 @@ public actor CoreEngine {
             queryEmbedding: queryEmbedding,
             chunks: allChunks,
             config: config
+        )
+    }
+
+    // MARK: - Question Answering (RAG)
+
+    /// Ask a question and get a streaming answer with citations
+    /// - Parameters:
+    ///   - query: The user's question
+    ///   - topK: Number of context chunks to use (default: 5)
+    /// - Returns: AsyncStream of tokens (content, citations, metadata, errors)
+    public func ask(
+        query: String,
+        topK: Int = 5
+    ) -> AsyncStream<StreamToken> {
+        return AsyncStream { continuation in
+            Task {
+                do {
+                    let startTime = Date()
+
+                    // Search for relevant chunks
+                    let searchResults = try await search(query: query, topK: topK)
+
+                    // Build RAG prompt
+                    let (prompt, citations) = promptBuilder.buildPrompt(
+                        query: query,
+                        searchResults: searchResults
+                    )
+
+                    // Stream generated answer
+                    for await token in await generationModel.generateStream(prompt) {
+                        continuation.yield(.content(token))
+                    }
+
+                    // Send final metadata
+                    let generationTimeMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                    let metadata = AnswerMetadata(
+                        tokensGenerated: 0,  // Mock doesn't track tokens
+                        generationTimeMs: generationTimeMs,
+                        citationsUsed: citations.count
+                    )
+                    continuation.yield(.metadata(metadata))
+
+                    continuation.finish()
+                } catch {
+                    continuation.yield(.error(error.localizedDescription))
+                    continuation.finish()
+                }
+            }
+        }
+    }
+
+    /// Ask a question and get a complete answer (non-streaming)
+    /// - Parameters:
+    ///   - query: The user's question
+    ///   - topK: Number of context chunks to use (default: 5)
+    /// - Returns: Complete answer with citations
+    public func askComplete(
+        query: String,
+        topK: Int = 5
+    ) async throws -> Answer {
+        let startTime = Date()
+
+        // Search for relevant chunks
+        let searchResults = try await search(query: query, topK: topK)
+
+        // Build RAG prompt
+        let (prompt, citations) = promptBuilder.buildPrompt(
+            query: query,
+            searchResults: searchResults
+        )
+
+        // Generate answer
+        let text = try await generationModel.generate(prompt)
+
+        // Calculate timing
+        let generationTimeMs = Int(Date().timeIntervalSince(startTime) * 1000)
+
+        // Return complete answer
+        return Answer(
+            query: query,
+            text: text,
+            citations: citations,
+            generationTimeMs: generationTimeMs
         )
     }
 }

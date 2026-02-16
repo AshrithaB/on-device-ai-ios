@@ -114,6 +114,57 @@ struct CoreEngineCLI {
                 }
             }
 
+            // Demonstrate question answering (RAG)
+            print("=== Question Answering Demo ===\n")
+
+            let questions = [
+                "What is machine learning?",
+                "What are the types of machine learning?",
+                "How do neural networks work?"
+            ]
+
+            for (index, question) in questions.enumerated() {
+                print("Question \(index + 1): \"\(question)\"\n")
+                print("Answer: ", terminator: "")
+
+                // Stream the answer
+                var fullAnswer = ""
+                var citationCount = 0
+
+                for await token in await engine.ask(query: question, topK: 3) {
+                    switch token {
+                    case .content(let text):
+                        print(text, terminator: "")
+                        fflush(stdout)  // Flush to show streaming effect
+                        fullAnswer += text
+
+                    case .metadata(let meta):
+                        citationCount = meta.citationsUsed
+                        print("\n")
+                        print("📊 Generated in \(meta.generationTimeMs)ms")
+                        print("📚 Citations: \(meta.citationsUsed)")
+
+                    case .citation(let num):
+                        print("[\(num)]", terminator: "")
+
+                    case .error(let err):
+                        print("\n❌ Error: \(err)")
+                    }
+                }
+
+                // Show full answer with citations
+                if citationCount > 0 {
+                    print("\n📖 Citation Details:")
+                    let answer = try await engine.askComplete(query: question, topK: 3)
+                    for citation in answer.citations {
+                        print("  [\(citation.number)] Score: \(String(format: "%.3f", citation.score))")
+                        print("      \(String(citation.snippet.prefix(120)))...")
+                    }
+                }
+
+                print("\n" + String(repeating: "-", count: 80) + "\n")
+            }
+
             print("✅ Demo completed successfully!")
 
         } catch {
