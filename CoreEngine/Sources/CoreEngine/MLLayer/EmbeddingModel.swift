@@ -1,10 +1,10 @@
 import Foundation
 import Accelerate
+import CoreML
 
-/// Embedding model for generating vector representations of text
-/// For MVP: Uses a simple hash-based embedding (deterministic mock)
-/// Production: Replace with actual Core ML model
-public actor EmbeddingModel {
+/// Mock embedding model for testing and development
+/// Uses a simple hash-based embedding (deterministic mock)
+public actor MockEmbeddingModel {
     private let embeddingDimension = 384
     private let seed: UInt64
 
@@ -98,48 +98,143 @@ private struct LinearCongruentialGenerator {
     }
 }
 
-// MARK: - Future: Core ML Integration
+// MARK: - Simple Tokenizer
 
-/*
-/// Production implementation using actual Core ML model
-public actor CoreMLEmbeddingModel {
-    private let model: MiniLM_L6_v2
-    private let tokenizer: BertTokenizer
+/// Simple tokenizer for BERT-style models (MVP implementation)
+struct SimpleTokenizer {
+    let maxLength: Int = 128
+    let clsToken: Int32 = 101  // [CLS]
+    let sepToken: Int32 = 102  // [SEP]
+    let padToken: Int32 = 0    // [PAD]
 
-    public init() throws {
-        // Load Core ML model
+    func encode(_ text: String) -> (inputIds: [Int32], attentionMask: [Int32]) {
+        let words = text.lowercased().split(separator: " ")
+        var inputIds: [Int32] = [clsToken]
+
+        // Convert words to token IDs (simple hash-based approach)
+        for word in words.prefix(maxLength - 2) {
+            let tokenId = Int32(abs(word.hashValue) % 30522)  // BERT vocab size
+            inputIds.append(tokenId)
+        }
+
+        inputIds.append(sepToken)
+
+        // Create attention mask (1 for real tokens, 0 for padding)
+        let attentionMask = [Int32](repeating: 1, count: inputIds.count) +
+                           [Int32](repeating: 0, count: maxLength - inputIds.count)
+
+        // Pad input IDs
+        inputIds += [Int32](repeating: padToken, count: maxLength - inputIds.count)
+
+        return (inputIds, attentionMask)
+    }
+}
+
+// MARK: - Core ML Embedding Model
+
+#if !MOCK_EMBEDDINGS
+/// Production embedding model using Core ML
+public actor CoreMLEmbeddingModel: Sendable {
+    private let model: MLModel
+    private let tokenizer: SimpleTokenizer
+    private let embeddingDimension = 384
+
+    public enum EmbeddingError: Error {
+        case modelLoadFailed(String)
+        case embeddingFailed(String)
+        case invalidInput
+    }
+
+    public init(modelPath: String? = nil) throws {
         let config = MLModelConfiguration()
-        self.model = try MiniLM_L6_v2(configuration: config)
-        self.tokenizer = BertTokenizer()
+        config.computeUnits = .cpuAndNeuralEngine  // Use Neural Engine if available
+
+        if let path = modelPath {
+            var url = URL(fileURLWithPath: path)
+
+            // If .mlpackage path given, try .mlmodelc first (compiled version)
+            if url.pathExtension == "mlpackage" {
+                let compiledPath = url.deletingPathExtension().appendingPathExtension("mlmodelc")
+                if FileManager.default.fileExists(atPath: compiledPath.path) {
+                    url = compiledPath
+                } else {
+                    // Compile it on the fly
+                    url = try MLModel.compileModel(at: url)
+                }
+            }
+
+            self.model = try MLModel(contentsOf: url, configuration: config)
+        } else {
+            // Use bundled model (default for iOS app)
+            guard let modelURL = Bundle.main.url(forResource: "MiniLM_L6_v2", withExtension: "mlmodelc")
+                  ?? Bundle.main.url(forResource: "MiniLM_L6_v2", withExtension: "mlpackage") else {
+                throw EmbeddingError.modelLoadFailed("Model not found in bundle")
+            }
+
+            if modelURL.pathExtension == "mlpackage" {
+                // Compile if needed
+                let compiledURL = try MLModel.compileModel(at: modelURL)
+                self.model = try MLModel(contentsOf: compiledURL, configuration: config)
+            } else {
+                self.model = try MLModel(contentsOf: modelURL, configuration: config)
+            }
+        }
+
+        self.tokenizer = SimpleTokenizer()
     }
 
     public func embed(_ text: String) async throws -> [Float] {
-        // Tokenize
-        let tokens = tokenizer.encode(text, maxLength: 128)
+        return try await embedBatch([text]).first!
+    }
 
-        // Create MLMultiArray inputs
-        let inputIds = try MLMultiArray(shape: [1, 128], dataType: .int32)
-        let attentionMask = try MLMultiArray(shape: [1, 128], dataType: .int32)
+    public func embedBatch(_ texts: [String]) async throws -> [[Float]] {
+        var results: [[Float]] = []
 
-        for i in 0..<tokens.count {
-            inputIds[i] = tokens[i] as NSNumber
-            attentionMask[i] = 1 as NSNumber
+        for text in texts {
+            // Tokenize
+            let (inputIds, attentionMask) = tokenizer.encode(text)
+
+            // Create MLMultiArray inputs
+            let inputIdsArray = try MLMultiArray(shape: [1, 128], dataType: .int32)
+            let attentionMaskArray = try MLMultiArray(shape: [1, 128], dataType: .int32)
+
+            for i in 0..<128 {
+                inputIdsArray[i] = NSNumber(value: inputIds[i])
+                attentionMaskArray[i] = NSNumber(value: attentionMask[i])
+            }
+
+            // Create input feature provider
+            let input = try MLDictionaryFeatureProvider(dictionary: [
+                "input_ids": MLFeatureValue(multiArray: inputIdsArray),
+                "attention_mask": MLFeatureValue(multiArray: attentionMaskArray)
+            ])
+
+            // Run inference
+            let output = try model.prediction(from: input)
+
+            // Extract embeddings (384-dim)
+            guard let embeddingsFeature = output.featureValue(for: "embeddings"),
+                  let embeddingsArray = embeddingsFeature.multiArrayValue else {
+                throw EmbeddingError.embeddingFailed("Failed to extract embeddings from model output")
+            }
+
+            var embedding: [Float] = []
+            for i in 0..<embeddingDimension {
+                embedding.append(Float(truncating: embeddingsArray[i]))
+            }
+
+            results.append(embedding)
         }
 
-        // Run inference
-        let output = try model.prediction(
-            input_ids: inputIds,
-            attention_mask: attentionMask
-        )
-
-        // Extract embeddings
-        let embeddings = output.embeddings
-        var result: [Float] = []
-        for i in 0..<384 {
-            result.append(Float(truncating: embeddings[i] as! NSNumber))
-        }
-
-        return result
+        return results
     }
 }
-*/
+#endif
+
+// MARK: - Type Alias for Build-Time Selection
+
+#if MOCK_EMBEDDINGS
+public typealias EmbeddingModel = MockEmbeddingModel
+#else
+public typealias EmbeddingModel = CoreMLEmbeddingModel
+#endif

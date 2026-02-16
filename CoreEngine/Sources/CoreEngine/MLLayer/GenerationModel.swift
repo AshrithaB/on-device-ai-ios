@@ -1,9 +1,8 @@
 import Foundation
 
-/// Language model for text generation
-/// For MVP: Uses a simple extractive summarization (deterministic mock)
-/// Production: Replace with actual Core ML LLM or llama.cpp wrapper
-public actor GenerationModel {
+/// Mock language model for testing and development
+/// Uses simple extractive summarization (deterministic mock)
+public actor MockGenerationModel {
     private let seed: UInt64
 
     public enum GenerationError: Error {
@@ -141,17 +140,16 @@ public actor GenerationModel {
         return chunks
     }
 
-    /// Generate extractive answer from context chunks
+    /// Generate smart templated answer from context chunks
+    /// Improved mock: Creates fluent, coherent answers using templates
     private func generateExtractiveAnswer(
         query: String,
         contextChunks: [(number: Int, text: String)]
     ) -> String {
-        // Create answer by combining key sentences from context
+        // Extract key information from context
         var sentences: [String] = []
 
-        // Extract relevant sentences from each chunk
-        for (_, text) in contextChunks.prefix(3) {  // Use top 3 chunks
-            // Take first 1-2 sentences from each chunk
+        for (_, text) in contextChunks.prefix(3) {
             let chunkSentences = text.components(separatedBy: ". ")
                 .prefix(2)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -160,102 +158,270 @@ public actor GenerationModel {
             sentences.append(contentsOf: chunkSentences)
         }
 
-        // Build answer
-        var answer = "Based on the available information: "
+        // Analyze query type and generate appropriate answer
+        let answerStyle = determineAnswerStyle(query: query)
 
-        // Combine sentences
-        let combined = sentences.joined(separator: ". ")
+        var answer = ""
 
-        // Ensure proper ending punctuation
-        var finalText = combined
-        if !finalText.hasSuffix(".") && !finalText.hasSuffix("!") && !finalText.hasSuffix("?") {
-            finalText += "."
+        switch answerStyle {
+        case .definition:
+            // "What is X?" style questions
+            if let firstSentence = sentences.first {
+                answer = firstSentence
+                if sentences.count > 1 {
+                    answer += ". " + sentences[1...min(2, sentences.count-1)].joined(separator: ". ")
+                }
+            }
+
+        case .explanation:
+            // "How does X work?" style questions
+            answer = "Based on the provided context, "
+            answer += sentences.prefix(3).joined(separator: ". ")
+
+        case .enumeration:
+            // "What are the types of X?" style questions
+            let items = extractListItems(from: sentences)
+            if items.isEmpty {
+                answer = sentences.prefix(2).joined(separator: ". ")
+            } else {
+                answer = "According to the available information, "
+                answer += "the main types include: "
+                answer += items.joined(separator: "; ")
+            }
+
+        case .general:
+            // General questions
+            answer = sentences.prefix(3).joined(separator: ". ")
         }
 
-        answer += finalText
+        // Ensure proper ending
+        if !answer.hasSuffix(".") && !answer.hasSuffix("!") && !answer.hasSuffix("?") {
+            answer += "."
+        }
 
-        // Add citation markers for chunks used
+        // Add citations
         let citationNumbers = contextChunks.prefix(3).map { $0.number }
         let citations = citationNumbers.map { "[\($0)]" }.joined()
         answer += " \(citations)"
 
         return answer
     }
+
+    /// Determine the style of answer to generate based on query
+    private func determineAnswerStyle(query: String) -> AnswerStyle {
+        let lowercased = query.lowercased()
+
+        if lowercased.starts(with: "what is") || lowercased.starts(with: "define") {
+            return .definition
+        } else if lowercased.contains("how does") || lowercased.contains("how do") || lowercased.contains("explain") {
+            return .explanation
+        } else if lowercased.contains("what are the") || lowercased.contains("types of") || lowercased.contains("kinds of") {
+            return .enumeration
+        } else {
+            return .general
+        }
+    }
+
+    /// Extract list items from sentences (simple heuristic)
+    private func extractListItems(from sentences: [String]) -> [String] {
+        var items: [String] = []
+
+        for sentence in sentences {
+            // Look for list-like patterns
+            if sentence.contains(":") {
+                // Split on colon and take the part after
+                let parts = sentence.components(separatedBy: ":")
+                if parts.count > 1 {
+                    let listPart = parts[1]
+                    // Look for comma-separated items
+                    let commaItems = listPart.components(separatedBy: ",")
+                    if commaItems.count > 1 {
+                        items.append(contentsOf: commaItems.map { $0.trimmingCharacters(in: .whitespaces) })
+                    }
+                }
+            }
+        }
+
+        return items.prefix(5).map { $0 }
+    }
+
+    private enum AnswerStyle {
+        case definition
+        case explanation
+        case enumeration
+        case general
+    }
 }
 
-// MARK: - Future: Real LLM Integration
+// MARK: - LlamaCli Integration
 
-/*
-/// Production implementation using llama.cpp Swift wrapper
-public actor LlamaCppGenerationModel {
-    private let context: LlamaContext
-    private let model: LlamaModel
+#if !MOCK_LLM
+/// Production implementation using llama-cli executable
+public actor LlamaCliGenerationModel: Sendable {
+    private let modelPath: String
+    private let llamaCliPath: String
+    private let maxTokens: Int
+    private let temperature: Float
+    private let threads: Int
 
-    public init(modelPath: String) throws {
-        // Load GGUF model
-        let params = LlamaContextParams()
-        params.nCtx = 2048  // Context window size
-        params.nThreads = 4  // CPU threads
-        params.nGpuLayers = 0  // CPU-only for MVP
+    public enum GenerationError: Error {
+        case modelNotLoaded
+        case generationFailed(String)
+        case invalidPrompt
+        case contextTooLong
+        case llamaCliNotFound
+    }
 
-        self.model = try LlamaModel(path: modelPath)
-        self.context = try LlamaContext(model: model, params: params)
+    public init(modelPath: String, llamaCliPath: String? = nil, maxTokens: Int = 512, temperature: Float = 0.7, threads: Int = 4) throws {
+        self.modelPath = modelPath
+        self.maxTokens = maxTokens
+        self.temperature = temperature
+        self.threads = threads
+
+        // Determine llama-cli path
+        if let path = llamaCliPath {
+            self.llamaCliPath = path
+        } else {
+            // Default locations
+            let defaultPaths = [
+                "/Users/nitindattamovva/Desktop/Code/on-device-ai-ios/llama-cpp-build/build/bin/llama-cli",
+                "/usr/local/bin/llama-cli",
+                "/opt/homebrew/bin/llama-cli"
+            ]
+
+            guard let found = defaultPaths.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+                throw GenerationError.llamaCliNotFound
+            }
+
+            self.llamaCliPath = found
+        }
+
+        // Verify model exists
+        guard FileManager.default.fileExists(atPath: modelPath) else {
+            throw GenerationError.modelNotLoaded
+        }
     }
 
     public func generate(_ prompt: String) async throws -> String {
-        // Tokenize prompt
-        let tokens = try context.tokenize(prompt, addBos: true)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: llamaCliPath)
 
-        // Generate tokens
-        var outputTokens: [Int32] = []
-        let maxTokens = 512
+        // Build arguments
+        process.arguments = [
+            "-m", modelPath,
+            "-n", String(maxTokens),
+            "--temp", String(temperature),
+            "-t", String(threads),
+            "-p", prompt,
+            "--no-display-prompt",
+            "-ngl", "0"  // CPU-only for compatibility
+        ]
 
-        for _ in 0..<maxTokens {
-            // Evaluate
-            try context.eval(tokens: tokens + outputTokens)
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
 
-            // Sample next token
-            let logits = context.logits()
-            let nextToken = sampleToken(logits: logits)
+        try process.run()
+        process.waitUntilExit()
 
-            // Check for EOS
-            if nextToken == context.eosToken {
-                break
-            }
-
-            outputTokens.append(nextToken)
+        guard process.terminationStatus == 0 else {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+            throw GenerationError.generationFailed(errorMessage)
         }
 
-        // Decode tokens to text
-        let text = try context.decode(tokens: outputTokens)
-        return text
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: outputData, encoding: .utf8) else {
+            throw GenerationError.generationFailed("Failed to decode output")
+        }
+
+        // Clean up output (remove metadata, timing info, etc.)
+        let cleaned = cleanLlamaOutput(output)
+        return cleaned
     }
 
     public func generateStream(_ prompt: String) -> AsyncStream<String> {
         return AsyncStream { continuation in
             Task {
-                // Similar to above but yield each token as it's generated
-                let tokens = try context.tokenize(prompt, addBos: true)
-                var outputTokens: [Int32] = []
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: llamaCliPath)
 
-                for _ in 0..<512 {
-                    try context.eval(tokens: tokens + outputTokens)
-                    let nextToken = sampleToken(logits: context.logits())
+                process.arguments = [
+                    "-m", modelPath,
+                    "-n", String(maxTokens),
+                    "--temp", String(temperature),
+                    "-t", String(threads),
+                    "-p", prompt,
+                    "--no-display-prompt",
+                    "-ngl", "0"
+                ]
 
-                    if nextToken == context.eosToken {
-                        break
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+
+                // Set up output handling for streaming
+                let outputHandle = outputPipe.fileHandleForReading
+                outputHandle.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+                        // Stream each chunk
+                        continuation.yield(text)
                     }
-
-                    outputTokens.append(nextToken)
-
-                    // Decode and yield
-                    let text = try context.decode(tokens: [nextToken])
-                    continuation.yield(text)
                 }
 
-                continuation.finish()
+                do {
+                    try process.run()
+
+                    // Wait for completion in background
+                    DispatchQueue.global().async {
+                        process.waitUntilExit()
+                        outputHandle.readabilityHandler = nil
+                        continuation.finish()
+                    }
+                } catch {
+                    continuation.yield("[Error: \(error.localizedDescription)]")
+                    continuation.finish()
+                }
             }
         }
     }
+
+    // MARK: - Helpers
+
+    private func cleanLlamaOutput(_ output: String) -> String {
+        var cleaned = output
+
+        // Remove common llama.cpp metadata patterns
+        let patternsToRemove = [
+            "llm_load_tensors:.*\n",
+            "llama_model_load:.*\n",
+            "llama_new_context_with_model:.*\n",
+            "main:.*\n"
+        ]
+
+        for pattern in patternsToRemove {
+            cleaned = cleaned.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: .regularExpression
+            )
+        }
+
+        // Trim whitespace
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return cleaned
+    }
 }
-*/
+#endif
+
+// MARK: - Type Alias for Build-Time Selection
+
+#if MOCK_LLM
+public typealias GenerationModel = MockGenerationModel
+#else
+public typealias GenerationModel = LlamaCliGenerationModel
+#endif

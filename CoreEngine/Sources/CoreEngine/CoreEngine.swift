@@ -14,16 +14,42 @@ public actor CoreEngine {
     private let generationModel: GenerationModel
     private let promptBuilder: PromptBuilder
 
-    public init(databasePath: String = ":memory:") async throws {
+    public init(databasePath: String = ":memory:", embeddingModelPath: String? = nil, generationModelPath: String? = nil, llamaCliPath: String? = nil) async throws {
         self.database = try Database(path: databasePath)
         self.documentStore = DocumentStore(database: database)
         self.chunkStore = ChunkStore(database: database)
         self.embeddingStore = EmbeddingStore(database: database)
         self.chunker = TextChunker()
+
+        // Initialize embedding model with optional path
+        #if os(macOS) && !MOCK_EMBEDDINGS
+        let defaultEmbeddingPath = "/Users/nitindattamovva/Desktop/Code/on-device-ai-ios/Models/MiniLM_L6_v2.mlpackage"
+        self.embeddingModel = try EmbeddingModel(modelPath: embeddingModelPath ?? defaultEmbeddingPath)
+        #elseif !MOCK_EMBEDDINGS
+        self.embeddingModel = try EmbeddingModel(modelPath: embeddingModelPath)
+        #else
         self.embeddingModel = EmbeddingModel()
+        #endif
+
         self.vectorStore = try await VectorStore(embeddingStore: embeddingStore)
         self.similaritySearch = SimilaritySearch(vectorStore: vectorStore)
+
+        // Initialize generation model with optional path
+        #if os(macOS) && !MOCK_LLM
+        let defaultLLMPath = "/Users/nitindattamovva/Desktop/Code/on-device-ai-ios/Models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+        self.generationModel = try GenerationModel(
+            modelPath: generationModelPath ?? defaultLLMPath,
+            llamaCliPath: llamaCliPath
+        )
+        #elseif !MOCK_LLM
+        guard let llmPath = generationModelPath else {
+            fatalError("generationModelPath required for non-macOS platforms when not using mock")
+        }
+        self.generationModel = try GenerationModel(modelPath: llmPath, llamaCliPath: llamaCliPath)
+        #else
         self.generationModel = GenerationModel()
+        #endif
+
         self.promptBuilder = PromptBuilder()
     }
 

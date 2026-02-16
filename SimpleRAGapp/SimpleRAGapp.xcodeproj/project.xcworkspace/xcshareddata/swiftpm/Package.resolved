@@ -9,6 +9,23 @@
         "revision" : "2cf6c756e1e5ef6901ebae16576a7e4e4b834622",
         "version" : "6.29.3"
       }
+    },
+    {
+      "identity" : "llama.cpp",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ggerganov/llama.cpp.git",
+      "state" : {
+        "revision" : "b6d6c5289f1c9c677657c380591201ddb210b649"
+      }
+    },
+    {
+      "identity" : "swiftllama",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ShenghaiWang/SwiftLlama.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "792181492beff9edba52314a040032cefb19edd6"
+      }
     }
   ],
   "version" : 3
